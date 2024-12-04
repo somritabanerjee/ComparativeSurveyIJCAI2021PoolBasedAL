@@ -1,0 +1,4 @@
+./Dataset/dealeddata/sonar-svmstyle.txt
+mean acc: 0.7639. std dev acc: 0.0379
+mean auc: 0.7641. std dev auc: 0.0345
+mean f1: 0.7236. std dev f1: 0.0589
