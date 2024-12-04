@@ -11,6 +11,9 @@ try:
 except ImportError:
     from sklearn.cross_validation import train_test_split
 
+from tqdm import tqdm
+import time
+
 # import the sklearn library
 from sklearn.linear_model import LogisticRegression as LR
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis as LDA
@@ -72,7 +75,7 @@ def run(trn_ds, tst_ds, lbr, model, qs, quota, n_labeled):
 		acc_T = accuracy_score(y_test, y_pred) * 1.0
 		auc_T = roc_auc_score(y_test, y_pred) * 1.0
 		f1_T = f1_score(y_test, y_pred) * 1.0
-		print(str(round(acc_T,4)) +' '+str(round(auc_T,4)) +' ' + str(round(f1_T,4)))
+		# print(str(round(acc_T,4)) +' '+str(round(auc_T,4)) +' ' + str(round(f1_T,4)))
 
 		#print(acc_T)
 		acc.append(acc_T)
@@ -100,7 +103,7 @@ def run(trn_ds, tst_ds, lbr, model, qs, quota, n_labeled):
 	acc_T = accuracy_score(y_test, y_pred) * 1.0
 	auc_T = roc_auc_score(y_test, y_pred) * 1.0
 	f1_T = f1_score(y_test, y_pred) * 1.0
-	print(str(round(acc_T,4)) +' '+str(round(auc_T,4)) +' ' + str(round(f1_T,4)))
+	# print(str(round(acc_T,4)) +' '+str(round(auc_T,4)) +' ' + str(round(f1_T,4)))
 
 	acc.append(acc_T)
 	auc.append(auc_T)
@@ -180,14 +183,15 @@ def form_dataset(dict_data, data_id):
 	return X,y
 
 def cal_average(res_total):
-	res = []
-	for i in range(len(res_total[0])):
-		sum = 0.0
-		for j in range(len(res_total)):
-			sum = sum + res_total[j][i]
-		sum = float((sum *1.0) / (len(res_total)*1.0))
-		res.append(sum)
-	return res
+	# Average over all trials (all rows) for each AL step
+    return [sum(step) / len(res_total) for step in zip(*res_total)]
+
+def cal_stddev(res_total):
+    # Calculates the standard deviation across all trials for each active learning step.
+    res_total = np.array(res_total)
+    stddev = np.std(res_total, axis=0)
+    return stddev
+
 
 def test_model(labeled_X, labeled_y,test_X, test_y):
 	X_train = labeled_X
@@ -209,7 +213,7 @@ def test_model(labeled_X, labeled_y,test_X, test_y):
 
 def select_batch(batch_size, quota, unlabeled_X, unlabeled_y, labeled_X, labeled_y, test_X, test_y, model):
 	acc, auc, f1 = test_model(labeled_X, labeled_y,test_X, test_y)
-	print(str(round(acc,4)) +' '+str(round(auc,4)) +' ' + str(round(f1,4)))
+	# print(str(round(acc,4)) +' '+str(round(auc,4)) +' ' + str(round(f1,4)))
 	res_acc=[]
 	res_auc=[]
 	res_f1=[]
@@ -229,43 +233,47 @@ def select_batch(batch_size, quota, unlabeled_X, unlabeled_y, labeled_X, labeled
 
 	already_selected1 = list(range(0,len(labeled_y)))
 
-	while (quota>0):
+	original_quota = quota
 
-		if quota < batch_size:  
-			batch_size = quota
+	with tqdm(total = original_quota, desc="Quota progress", leave=False) as pbar:
+		while (quota>0):
+
+			if quota < batch_size:  
+				batch_size = quota
 
 
-		quota = quota - batch_size
-		
-		if model.name == 'graph_density':
-			Y_idx = model.select_batch_(N = batch_size, already_selected=already_selected1)
-		elif model.name == 'margin' or model.name == 'informative_diverse' or model.name == 'margin_cluster_mean' or model.name == 'kcenter':
-			selected_model = utils.get_model(method = 'logistic')
-			selected_model.fit(np.array(labeled_X),np.array(labeled_y))
-			Y_idx = model.select_batch_(model = selected_model, N = batch_size, already_selected=already_selected1)
-		elif model.name == 'hierarchical':
-			labeled_hier=dict(zip(already_selected1, labeled_y))
-			Y_idx = model.select_batch_(N = batch_size, already_selected = already_selected1,labeled = labeled_hier, y=y)
-		else:
-			Y_idx = model.select_batch_(already_selected1,batch_size)
-		already_selected1.extend(Y_idx)
-
-		for i in Y_idx:
-			labeled_X.append(X[i])
-			labeled_y.append(y[i])
-			tmpx = copy.deepcopy(X[i].tolist())
-			tmpx.append(int(y[i]))
+			quota = quota - batch_size
+			pbar.update(batch_size)
 			
-			point_record.append(tmpx)
+			if model.name == 'graph_density':
+				Y_idx = model.select_batch_(N = batch_size, already_selected=already_selected1)
+			elif model.name == 'margin' or model.name == 'informative_diverse' or model.name == 'margin_cluster_mean' or model.name == 'kcenter':
+				selected_model = utils.get_model(method = 'logistic')
+				selected_model.fit(np.array(labeled_X),np.array(labeled_y))
+				Y_idx = model.select_batch_(model = selected_model, N = batch_size, already_selected=already_selected1)
+			elif model.name == 'hierarchical':
+				labeled_hier=dict(zip(already_selected1, labeled_y))
+				Y_idx = model.select_batch_(N = batch_size, already_selected = already_selected1,labeled = labeled_hier, y=y)
+			else:
+				Y_idx = model.select_batch_(already_selected1,batch_size)
+			already_selected1.extend(Y_idx)
 
-		acc_T, auc_T, f1_T = test_model(labeled_X, labeled_y,test_X, test_y)
-		print(str(round(acc_T,4)) +' '+str(round(auc_T,4)) +' ' + str(round(f1_T,4)))
+			for i in Y_idx:
+				labeled_X.append(X[i])
+				labeled_y.append(y[i])
+				tmpx = copy.deepcopy(X[i].tolist())
+				tmpx.append(int(y[i]))
+				
+				point_record.append(tmpx)
 
-		res_acc.append(acc_T)
-		res_auc.append(auc_T)
-		res_f1.append(f1_T)
-		if quota <= 0:
-			break
+			acc_T, auc_T, f1_T = test_model(labeled_X, labeled_y,test_X, test_y)
+			# print(str(round(acc_T,4)) +' '+str(round(auc_T,4)) +' ' + str(round(f1_T,4)))
+
+			res_acc.append(acc_T)
+			res_auc.append(auc_T)
+			res_f1.append(f1_T)
+			if quota <= 0:
+				break
 
 	return res_acc, res_auc, res_f1
 
@@ -299,13 +307,23 @@ def main():
 	iternum = int(sys.argv[4])
 	
 	n_labeled = int(sys.argv[5])
+
+	log_dir = './logfile/'
+	if not os.path.exists(log_dir):
+		os.makedirs(log_dir)
 	
-	sys.stdout = Logger('./logfile/'+ds_name+ '_'  + strategy + '_' + str(bs) + '_' + str(n_labeled) + '_' + str(iternum)  +'_log.txt')
+	log_file = os.path.join(
+		log_dir,
+		f"{ds_name}_{strategy}_{bs}_{n_labeled}_{iternum}_log.txt"
+	)
+
+	sys.stdout = Logger(log_file)
+
 	random.seed(4666)
 
 	warnings.filterwarnings('ignore')
 
-	dataset_filepath = os.path.join(os.path.abspath('..') + '/Dataset/dealeddata', '%s.txt' % ds_name)
+	dataset_filepath = os.path.join('./Dataset/dealeddata', '%s.txt' % ds_name)
 	print(dataset_filepath)
 
 	test_size = 0.4
@@ -319,10 +337,9 @@ def main():
 	res_f1_total = []
 
 
-	
-	while(T1 < iternum): 
-		print(str(T1)+'th iteration')
-		T1 = T1 + 1
+	for T1 in tqdm(range(iternum), desc="Trials"):
+		# print(str(T1)+'th iteration')
+		# T1 = T1 + 1
 		dict_data=dict()
 		labeled_data=[]
 		test_data=[]
@@ -363,7 +380,7 @@ def main():
 		acc_m.append(get_aubc(quota, bs, res_acc_total[i]))
 		auc_m.append(get_aubc(quota, bs, res_auc_total[i]))
 		f1_m.append(get_aubc(quota, bs, res_f1_total[i]))
-		print(str(i)+': '+str(acc_m[i])+' '+str(auc_m[i])+' '+str(f1_m[i]))
+		# print(str(i)+': '+str(acc_m[i])+' '+str(auc_m[i])+' '+str(f1_m[i]))
 	mean_acc,stddev_acc = get_mean_stddev(acc_m)
 	mean_auc,stddev_auc = get_mean_stddev(auc_m)
 	mean_f1,stddev_f1 = get_mean_stddev(f1_m)
@@ -371,9 +388,16 @@ def main():
 	print('mean acc: '+str(mean_acc)+'. std dev acc: '+str(stddev_acc))
 	print('mean auc: '+str(mean_auc)+'. std dev auc: '+str(stddev_auc))
 	print('mean f1: '+str(mean_f1)+'. std dev f1: '+str(stddev_f1))
+
+	results_dir = './result/'
+	if not os.path.exists(results_dir):
+		os.makedirs(results_dir)
 	
 	file_name_totres =  ds_name + '_total_result_' +  strategy + '_' + str(bs) + '.txt'
-	file_totres =  open(os.path.join(os.path.abspath('..') + '/result', '%s' % file_name_totres),'w')
+	file_totres = open(os.path.join(
+		results_dir,
+		f"{file_name_totres}"
+	), 'w')
 	
 	for i in range(len(acc_m)):
 		tmp0 = str(i)+': '+str(acc_m[i])+' '+str(auc_m[i])+' '+str(f1_m[i]) + '\n'
@@ -382,20 +406,35 @@ def main():
 	file_totres.writelines(str(mean_auc)+' '+str(stddev_auc)+'\n')
 	file_totres.writelines(str(mean_f1)+' '+str(stddev_f1)+'\n')
 	
-	# cal avg
-	res_acc = cal_average(res_acc_total) 
-	res_auc = cal_average(res_auc_total) 
-	res_f1 = cal_average(res_f1_total)
 
-	file_name_res = ds_name + '_result_' +  strategy + '_' + str(bs) + '.txt'
-	file_res =  open(os.path.join(os.path.abspath('..') + '/result', '%s' % file_name_res),'w')
 
-	for i in range(0,len(res_acc)):
-		tmp1 = str(round(res_acc[i],4)) + ' ' + str(round(res_auc[i],4)) + ' ' + str(round(res_f1[i],4)) + '\n'
-		file_res.writelines(tmp1)
+	# Calculate average
+	res_acc_avg = cal_average(res_acc_total)
+	res_auc_avg = cal_average(res_auc_total)
+	res_f1_avg = cal_average(res_f1_total)
+
+	# Calculate standard deviation
+	res_acc_stddev = cal_stddev(res_acc_total)
+	res_auc_stddev = cal_stddev(res_auc_total)
+	res_f1_stddev = cal_stddev(res_f1_total)
+
+	# Create file name for storing results
+	file_name_res = f"{ds_name}_result_{strategy}_{bs}.txt"
+	file_res = open(os.path.join(results_dir, file_name_res), 'w')
+
+	# Write average and standard deviation to file
+	for i in range(len(res_acc_avg)):
+		line = (f"{round(res_acc_avg[i], 4)} ± {round(res_acc_stddev[i], 4)} "
+				f"{round(res_auc_avg[i], 4)} ± {round(res_auc_stddev[i], 4)} "
+				f"{round(res_f1_avg[i], 4)} ± {round(res_f1_stddev[i], 4)}\n")
+		file_res.writelines(line)
 
 	file_res.close()
 	file_totres.close()
+
+	# print("Shape of res_acc_total:", (len(res_acc_total), len(res_acc_total[0]) if res_acc_total else 0))
+	# print("First row of res_acc_total:", res_acc_total[0] if res_acc_total else "No data")
+
 
 
 if __name__ == '__main__':

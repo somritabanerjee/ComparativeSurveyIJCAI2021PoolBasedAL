@@ -106,7 +106,7 @@ class HierarchicalClusterAL(SamplingMethod):
     # Fit cluster and update cluster variables
 
     self.create_tree()
-    print('Finished creating hierarchical cluster')
+    # print('Finished creating hierarchical cluster')
 
   def fit_cluster(self, X):
     if not self.already_clustered:
